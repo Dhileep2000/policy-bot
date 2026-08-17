@@ -1,9 +1,20 @@
-<<<<<<< HEAD
+# Secrets and configuration files
 .env
 .env.*
+*.local
 backend/.env
 frontend/.env
-=======
+
+# Python specific ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+*.db
+
 # Logs
 logs
 *.log
@@ -13,23 +24,23 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-.env
-.env.*
+# Node dependencies and build output
+node_modules/
+dist/
+dist-ssr/
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# File formatting settings
 * text=auto
 *.ts text eol=lf
 *.tsx text eol=lf
@@ -38,4 +49,3 @@ dist-ssr
 *.css text eol=lf
 *.json text eol=lf
 *.html text eol=lf
->>>>>>> 645d29fce99f83c39431a2c58f3bbfc582999722
