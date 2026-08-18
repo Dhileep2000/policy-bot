@@ -3,7 +3,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from config import gemini_is_configured, settings
-from database import DatabaseError
+from database import DatabaseError, get_document_by_id, get_all_documents
 from vector_store import vector_store
 
 # Relevance threshold: cosine similarity score threshold for document grounding
@@ -87,19 +87,19 @@ class PolicyRAGPipeline:
             index_names_set.add(tag)
             companies_set.add(company)
 
-        context_text = "\n---\n".join(context_blocks)
+        context_text = "\n---\n".join(context_blocks) if context_blocks else "[No relevant text snippets retrieved from the documents]"
 
         system_prompt = (
             "You are an advanced document intelligence assistant specialized in multi-document analysis and retrieval-augmented generation (RAG).\n"
             "You are provided with retrieved context from uploaded files (e.g. price lists, guides, FAQs, policies, manuals, etc.).\n\n"
             "INSTRUCTIONS:\n"
-            "1. Answer the query thoroughly, objectively, and accurately using ONLY the provided document context.\n"
+            "1. Answer the query thoroughly, objectively, and accurately using ONLY the provided document context. Do NOT use general knowledge or make assumptions not supported by the context.\n"
             "2. MULTI-DOCUMENT ANALYSIS: If the user query asks to compare, analyze, or synthesize details from different documents or categories:\n"
             "   - Group your analysis clearly and reference the source files by name.\n"
             "   - Highlight similarities, differences, pricing details, requirements, or services specific to each document.\n"
             "3. ACCURATE CITATIONS: Cite your sources inline using square brackets matching the source number, e.g., '[1]', '[2]'. If multiple sources support a point, cite them together (e.g. '[1][2]').\n"
             "4. FORMATTING: Use clean markdown headers (#### Header) and bullet points for high legibility.\n"
-            "5. GROUNDING & FIDELITY: Base your response strictly on the retrieved context below. If context for the query is missing, state clearly that it is not present in the uploaded files.\n\n"
+            "5. GROUNDING & FIDELITY: Base your response strictly on the retrieved context below. If the context does not contain the answer, state clearly and explicitly: 'I could not find the answer to this question in the uploaded document(s).'\n\n"
             "RETRIEVED DOCUMENT CONTEXT:\n"
             "{context}"
         )
@@ -123,36 +123,57 @@ class PolicyRAGPipeline:
             "response_type": "document_grounded"
         }
 
-    def _answer_from_general_knowledge(self, user_query: str, partial_context: str = "") -> Dict[str, Any]:
+    def _answer_from_selected_document(self, user_query: str, retrieved_chunks: List[Dict], document_name: str) -> Dict[str, Any]:
         """
-        Generate an answer using general knowledge when uploaded documents do not contain sufficient context.
+        Generate an answer strictly grounded in the selected document, verifying if the requested details are available.
         """
-        if partial_context:
-            system_prompt = (
-                "You are a professional document intelligence assistant.\n\n"
-                "The user asked a question. The uploaded documents contain partial information "
-                "but do not fully answer the query. Below is the partial context found:\n\n"
-                "--- PARTIAL DOCUMENT CONTEXT ---\n"
-                "{context}\n"
-                "--- END PARTIAL CONTEXT ---\n\n"
-                "INSTRUCTIONS:\n"
-                "1. Share relevant findings from the uploaded documents first.\n"
-                "2. Supplement with general knowledge to provide a comprehensive answer.\n"
-                "3. Clearly mark the general knowledge section with:\n"
-                "   '> **Note:** The following details are based on general knowledge, not your uploaded files.'\n"
-                "4. Use clean headers (#### Header) and bullet points.\n"
+        context_blocks = []
+        sources_list = []
+
+        for idx, chunk in enumerate(retrieved_chunks):
+            citation_num = idx + 1
+            filename = chunk["filename"]
+            company = chunk.get("company") or chunk.get("metadata", {}).get("company") or "Document Library"
+            tag = chunk["tag"] or "DOCUMENT"
+            content = chunk["content"]
+            score = chunk["score"]
+            meta = chunk["metadata"] or {}
+            section = meta.get("section", f"Page {meta.get('page', 1)}")
+
+            context_blocks.append(
+                f"Source [{citation_num}]:\n"
+                f"Document Title: {filename}\n"
+                f"Section: {section}\n"
+                f"Content: {content}\n"
             )
-        else:
-            system_prompt = (
-                "You are a professional document intelligence assistant.\n\n"
-                "The user asked a question, but no relevant information was found in the uploaded documents.\n\n"
-                "INSTRUCTIONS:\n"
-                "1. Answer using general knowledge.\n"
-                "2. Begin your response with:\n"
-                "   '> **Note:** This response is generated from general knowledge. "
-                "It is not based on your uploaded documents.'\n"
-                "3. Use clean headers (#### Header) and bullet points.\n"
-            )
+
+            sources_list.append({
+                "id": citation_num,
+                "company": company,
+                "filename": filename,
+                "tag": tag,
+                "section": section,
+                "score": f"{int(score * 100)}%",
+                "content": content
+            })
+
+        context_text = "\n---\n".join(context_blocks) if context_blocks else "[No text retrieved from the document]"
+
+        system_prompt = (
+            f"You are an advanced document intelligence assistant. Your task is to analyze the selected document '{document_name}' "
+            "and answer the user's question. You must verify whether the requested information is actually available in that document.\n\n"
+            "INSTRUCTIONS:\n"
+            "1. IDENTIFY: Identify clearly what the user is asking for in their question.\n"
+            "2. VERIFY & ANALYZE: Review the provided context blocks below (which contain snippets from the selected document). "
+            "Verify if the information needed to answer the user's question is actually present in the document. "
+            "Gather all the relevant details (like rules, requirements, figures) to answer the query.\n"
+            "3. RESPONSE GROUNDING:\n"
+            "   - If the information IS available in the document: Answer the question thoroughly, citing the source snippets using square brackets (e.g., '[1]', '[2]'). Use clean markdown formatting.\n"
+            "   - If the information IS NOT available or only partially available in this document: State clearly and explicitly that the requested details could not be found or verified in the selected document '{document_name}'. Explain what is missing and answer only what is supported by the document. Do not use external knowledge to invent information that is not in the document.\n"
+            "4. STRICT FIDELITY: Rely ONLY on the provided context below. Do not use general knowledge or assume details not present in the document.\n\n"
+            "RETRIEVED DOCUMENT CONTEXT:\n"
+            "{context}"
+        )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
@@ -160,85 +181,83 @@ class PolicyRAGPipeline:
         ])
 
         chain = prompt | self._get_llm() | StrOutputParser()
-
-        inputs = {"question": user_query}
-        if partial_context:
-            inputs["context"] = partial_context
-
-        answer = self._invoke_with_fallback(chain, inputs)
+        answer = self._invoke_with_fallback(chain, {
+            "context": context_text,
+            "question": user_query
+        })
 
         return {
             "answer": answer,
-            "sources": [],
-            "index_names": [],
+            "sources": sources_list,
+            "index_names": [document_name],
             "companies": [],
-            "response_type": "general_knowledge"
+            "response_type": "document_grounded"
         }
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "{question}")
-        ])
-
-        chain = prompt | self._get_llm() | StrOutputParser()
-
-        inputs = {"question": user_query}
-        if partial_context:
-            inputs["context"] = partial_context
-
-        answer = self._invoke_with_fallback(chain, inputs)
-
-        return {
-            "answer": answer,
-            "sources": [],
-            "index_names": [],
-            "companies": [],
-            "response_type": "general_knowledge"
-        }
-
-    def query(self, user_query: str) -> Dict[str, Any]:
+    def query(self, user_query: str, document_id: int | None = None) -> Dict[str, Any]:
         """
-        Main query pipeline implementing multi-document balanced retrieval & multi-company RAG synthesis.
+        Main query pipeline implementing strictly document-grounded RAG synthesis.
         """
-        # Retrieve up to 16 candidate chunks across all uploaded documents with balanced sampling
+        # 1. Verify that there are documents in the database
         try:
-            retrieved_chunks = vector_store.similarity_search(user_query, k=16, per_doc_k=4)
+            all_docs = get_all_documents()
+            if not all_docs:
+                return {
+                    "answer": "No documents found in the database. Please upload a document in the Knowledge Base first before asking questions.",
+                    "sources": [],
+                    "index_names": [],
+                    "companies": [],
+                    "response_type": "document_grounded"
+                }
+        except Exception as exc:
+            print(f"[RAG] Database connection failed while checking documents: {exc}")
+            return {
+                "answer": "I cannot answer your question because the database is currently offline or unreachable.",
+                "sources": [],
+                "index_names": [],
+                "companies": [],
+                "response_type": "document_grounded"
+            }
+
+        # Fetch document name if document_id is provided
+        document_name = None
+        if document_id is not None:
+            try:
+                doc = get_document_by_id(document_id)
+                if doc:
+                    document_name = doc.get("filename")
+            except Exception as e:
+                print(f"[RAG] Error fetching document metadata: {e}")
+
+        # 2. Retrieve candidate chunks
+        try:
+            retrieved_chunks = vector_store.similarity_search(user_query, k=16, per_doc_k=4, document_id=document_id)
         except DatabaseError as exc:
-            # Chat remains useful when Supabase is unavailable. The response is
-            # explicitly marked as general knowledge because no policy context
-            # could be retrieved or cited.
             print(f"[RAG] Document retrieval unavailable: {exc}")
-            return self._answer_from_general_knowledge(user_query)
+            target_name = document_name or "uploaded document(s)"
+            return {
+                "answer": f"I cannot analyze the {target_name} because the vector store is currently offline.",
+                "sources": [],
+                "index_names": [document_name] if document_name else [],
+                "companies": [],
+                "response_type": "document_grounded"
+            }
+
+        if document_id is not None:
+            target_name = document_name or f"Document ID {document_id}"
+            return self._answer_from_selected_document(user_query, retrieved_chunks, target_name)
 
         if not retrieved_chunks:
-            print(f"[RAG] No indexed documents found. Fallback to general knowledge for: '{user_query[:80]}...'")
-            return self._answer_from_general_knowledge(user_query)
+            return {
+                "answer": "I could not find any relevant information in the uploaded document(s) to answer this question.",
+                "sources": [],
+                "index_names": [],
+                "companies": [],
+                "response_type": "document_grounded"
+            }
 
-        strong_matches = [c for c in retrieved_chunks if c["score"] >= RELEVANCE_THRESHOLD]
-        weak_matches = [c for c in retrieved_chunks if c["score"] < RELEVANCE_THRESHOLD]
-
-        print(f"[RAG] Multi-Doc Retrieval: {len(retrieved_chunks)} candidate chunks found. "
-              f"{len(strong_matches)} strong (>={RELEVANCE_THRESHOLD}), {len(weak_matches)} weak. "
-              f"Top score: {retrieved_chunks[0]['score']:.3f}")
-
-        if strong_matches:
-            # Use top strong matches (up to 10 chunks across documents for multi-company context)
-            top_chunks = strong_matches[:10]
-            return self._answer_from_documents(user_query, top_chunks)
-
-        if weak_matches:
-            partial_parts = []
-            for chunk in weak_matches[:4]:
-                company = chunk.get("company") or "Corporate Policy"
-                partial_parts.append(
-                    f"[Company: {company} | File: {chunk['filename']} | Section: {chunk['metadata'].get('section', 'N/A')} | Score: {int(chunk['score'] * 100)}%]\n{chunk['content']}"
-                )
-            partial_context = "\n---\n".join(partial_parts)
-
-            print(f"[RAG] Weak matches only. Generating hybrid response.")
-            return self._answer_from_general_knowledge(user_query, partial_context=partial_context)
-
-        return self._answer_from_general_knowledge(user_query)
+        # General multi-document search across all retrieved chunks
+        return self._answer_from_documents(user_query, retrieved_chunks)
 
 
 rag_pipeline = PolicyRAGPipeline()

@@ -25,9 +25,13 @@ create table if not exists public.document_chunks (
 create index if not exists document_chunks_document_id_idx on public.document_chunks(document_id);
 create index if not exists documents_status_idx on public.documents(status);
 
+drop function if exists public.match_document_chunks(extensions.vector(3072), integer);
+drop function if exists public.match_document_chunks(extensions.vector(3072), integer, bigint);
+
 create or replace function public.match_document_chunks(
   query_embedding extensions.vector(3072),
-  match_count integer default 16
+  match_count integer default 16,
+  filter_document_id bigint default null
 )
 returns table (
   chunk_id bigint,
@@ -55,6 +59,7 @@ as $$
   from public.document_chunks as chunks
   join public.documents as documents on documents.id = chunks.document_id
   where documents.status = 'Indexed'
+    and (filter_document_id is null or chunks.document_id = filter_document_id)
   order by chunks.embedding <=> query_embedding
   limit match_count;
 $$;

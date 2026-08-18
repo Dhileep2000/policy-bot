@@ -55,6 +55,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
+    document_id: Optional[int] = None
 
 
 def ensure_database_ready() -> None:
@@ -119,30 +120,39 @@ def extract_text_content(content) -> str:
 
 def detect_company_name(filename: str, sample_text: str) -> str:
     """
-    Detects company/organization name from filename or snippet content.
+    Detects company/organization name dynamically from text snippet using Gemini,
+    with a fallback to parsing the filename.
     """
-    known_companies = [
-        "TCS", "Tata Consultancy Services", "Cognizant", "CTS", "Infosys", 
-        "Wipro", "Accenture", "Google", "Microsoft", "Amazon", "IBM", 
-        "Meta", "Apple", "Lexis AI", "Capgemini", "HCL", "Tech Mahindra"
-    ]
-    fname_upper = filename.upper()
-    text_upper = sample_text[:1000].upper()
-    
-    for comp in known_companies:
-        if comp.upper() in fname_upper or comp.upper() in text_upper:
-            if comp == "Tata Consultancy Services":
-                return "TCS"
-            if comp == "CTS":
-                return "Cognizant"
-            return comp
-            
+    try:
+        if gemini_is_configured() and sample_text.strip():
+            llm = ChatGoogleGenerativeAI(
+                model=settings.LLM_MODEL,
+                google_api_key=settings.GEMINI_API_KEY,
+                temperature=0.0
+            )
+            prompt = (
+                "Identify the primary company or organization name mentioned in the following text. "
+                "If no clear company/organization name is mentioned, try to deduce it or return 'Corporate'. "
+                "Provide ONLY the name, nothing else (maximum 3 words).\n\n"
+                f"Document Title: {filename}\n"
+                f"Text snippet: {sample_text[:1200]}"
+            )
+            response = llm.invoke(prompt)
+            detected = extract_text_content(response.content).strip()
+            # Clean response from any markdown or formatting issues
+            detected = detected.replace('"', '').replace("'", "").strip()
+            if detected and len(detected) < 40 and "error" not in detected.lower():
+                return detected
+    except Exception as e:
+        print(f"Error detecting company name dynamically: {e}")
+        
+    # Fallback parser
     base = filename.split('.')[0].replace('_', ' ').replace('-', ' ')
     words = base.split()
     if len(words) > 0 and len(words[0]) > 2 and words[0].lower() not in ["sample", "global", "corporate", "remote", "leave", "employee", "handbook", "policy"]:
         return words[0].capitalize()
         
-    return "Corporate Policy"
+    return "Corporate"
 
 def generate_doc_summary_and_tag(filename: str, sample_text: str) -> tuple[str, str]:
     """
@@ -316,7 +326,7 @@ def process_and_index_document(doc_id: int, stored_filename: str, filename: str)
 async def chat_query(request: ChatRequest):
     try:
         ensure_chat_services_ready()
-        response = rag_pipeline.query(request.message)
+        response = rag_pipeline.query(request.message, request.document_id)
         return response
     except HTTPException:
         raise

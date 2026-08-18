@@ -34,7 +34,7 @@ export function useChat() {
   const [sending, setSending] = useState(false);
   const [indexStatus, setIndexStatus] = useState<'Operational' | 'Searching'>('Operational');
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, documentId?: number) => {
     if (!text.trim() || sending) return;
 
     const userMessageId = `user-${Date.now()}`;
@@ -83,7 +83,7 @@ export function useChat() {
         );
       }, 2500);
 
-      const res = await api.post('/chat', { message: text });
+      const res = await api.post('/chat', { message: text, document_id: documentId });
       
       const { answer, sources, index_names, response_type } = res.data;
       

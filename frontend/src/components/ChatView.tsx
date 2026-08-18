@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { type Message } from '../hooks/useChat';
+import { type Document } from '../hooks/useDocuments';
 
 interface ChatViewProps {
   messages: Message[];
   sending: boolean;
   indexStatus: string;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, documentId?: number) => void;
   onClearChat: () => void;
+  documents: Document[];
 }
 
 export default function ChatView({
@@ -15,8 +17,10 @@ export default function ChatView({
   indexStatus,
   onSendMessage,
   onClearChat,
+  documents,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState('');
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,10 +47,23 @@ export default function ChatView({
 
   const handleSend = () => {
     if (!inputText.trim() || sending) return;
-    onSendMessage(inputText);
-    setInputText('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '56px';
+
+    // Check if there are any indexed documents
+    const indexedDocs = documents.filter(d => d.status === 'Indexed');
+    if (indexedDocs.length > 0) {
+      // Prompt user to select which document to query
+      setPendingQuery(inputText);
+      setInputText('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '56px';
+      }
+    } else {
+      // If no documents are indexed, run default general knowledge search
+      onSendMessage(inputText);
+      setInputText('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '56px';
+      }
     }
   };
 
@@ -278,6 +295,76 @@ export default function ChatView({
               )}
             </button>
           </div>
+
+          {/* Document Selection Grid */}
+          {pendingQuery && (
+            <div className="mt-3 p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 shadow-xl flex flex-col gap-3.5 animate-in slide-in-from-bottom-2 duration-200">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <div className="flex flex-col overflow-hidden mr-4">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Targeted Document Analysis</span>
+                  <span className="text-xs font-semibold text-slate-200 mt-0.5 truncate">
+                    Question: "{pendingQuery}"
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    setInputText(pendingQuery);
+                    setPendingQuery(null);
+                  }}
+                  className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                >
+                  <span className="material-symbols-outlined text-[16px]">close</span> Cancel
+                </button>
+              </div>
+
+              <div className="text-xs font-medium text-slate-300">
+                Select the document to analyze and answer your question:
+              </div>
+
+              {/* Document Card Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-44 overflow-y-auto pr-1">
+                {documents
+                  .filter(d => d.status === 'Indexed')
+                  .map(doc => (
+                    <div
+                      key={doc.id}
+                      onClick={() => {
+                        onSendMessage(pendingQuery, doc.id);
+                        setPendingQuery(null);
+                      }}
+                      className="p-3 bg-slate-800 border border-slate-700/60 rounded-xl hover:bg-slate-700/70 hover:border-slate-500 transition-all cursor-pointer flex items-start gap-2.5 group hover:-translate-y-0.5"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-slate-700/80 flex items-center justify-center shrink-0 text-slate-300 group-hover:bg-slate-600 group-hover:text-white transition-colors">
+                        <span className="material-symbols-outlined text-[18px]">description</span>
+                      </div>
+                      <div className="overflow-hidden flex-1">
+                        <h6 className="text-xs font-bold text-slate-100 truncate w-full group-hover:text-white">
+                          {doc.filename}
+                        </h6>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[9px] text-slate-400 font-bold px-1 py-0.5 rounded-sm bg-slate-700/50 uppercase">
+                            {doc.tag || 'DOCUMENT'}
+                          </span>
+                          <span className="text-[10px] text-slate-400">{doc.storage_size}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                {/* Ask Generally Card */}
+                <div
+                  onClick={() => {
+                    onSendMessage(pendingQuery);
+                    setPendingQuery(null);
+                  }}
+                  className="p-3 bg-slate-800/40 border border-dashed border-slate-700 rounded-xl hover:bg-slate-800/80 hover:border-slate-500 transition-all cursor-pointer flex items-center justify-center gap-2 group"
+                >
+                  <span className="material-symbols-outlined text-[18px] text-slate-400 group-hover:text-white">language</span>
+                  <span className="text-xs font-bold text-slate-300 group-hover:text-white">Analyze All Documents</span>
+                </div>
+              </div>
+            </div>
+          )}
           
           <div className="text-center mt-1.5">
             <span className="text-[11px] text-slate-400 font-medium">

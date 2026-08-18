@@ -33,12 +33,16 @@ class SupabaseVectorStore:
             ],
         )
 
-    def similarity_search(self, query: str, k: int = 16, per_doc_k: int = 4) -> list[dict[str, Any]]:
+    def similarity_search(self, query: str, k: int = 16, per_doc_k: int = 4, document_id: int | None = None) -> list[dict[str, Any]]:
         query_vector = self._get_embeddings().embed_query(query)
         rows = db.request(
             "POST",
             "rpc/match_document_chunks",
-            json={"query_embedding": query_vector, "match_count": max(k, per_doc_k)},
+            json={
+                "query_embedding": query_vector,
+                "match_count": max(k, per_doc_k),
+                "filter_document_id": document_id
+            },
         )
         if not rows:
             return []

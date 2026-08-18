@@ -92,21 +92,36 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Could not connect to Supabase.")
 
     def test_chat_falls_back_to_gemini_when_document_retrieval_is_unavailable(self) -> None:
-        fallback_answer = {
-            "answer": "General guidance.",
+        expected_answer = {
+            "answer": "I cannot analyze the uploaded document(s) because the vector store is currently offline.",
             "sources": [],
             "index_names": [],
             "companies": [],
-            "response_type": "general_knowledge",
+            "response_type": "document_grounded",
         }
         with (
+            patch("rag.get_all_documents", return_value=[{"id": 1}]),
             patch.object(main.vector_store, "similarity_search", side_effect=main.DatabaseError("Could not connect to Supabase.")),
-            patch.object(main.rag_pipeline, "_answer_from_general_knowledge", return_value=fallback_answer),
         ):
             response = self.client.post("/api/chat", json={"message": "What is remote work?"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), fallback_answer)
+        self.assertEqual(response.json(), expected_answer)
+
+    def test_chat_with_document_id(self) -> None:
+        document_id = 7
+        answer = {
+            "answer": "Targeted remote work answer.",
+            "sources": [],
+            "index_names": ["remote-work.txt"],
+            "companies": [],
+            "response_type": "document_grounded"
+        }
+        with patch.object(main.rag_pipeline, "query", return_value=answer) as mock_query:
+            response = self.client.post("/api/chat", json={"message": "Can I work remotely?", "document_id": document_id})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), answer)
+            mock_query.assert_called_once_with("Can I work remotely?", document_id)
 
 
 if __name__ == "__main__":

@@ -109,6 +109,7 @@ function App() {
             indexStatus={indexStatus}
             onSendMessage={sendMessage}
             onClearChat={clearChat}
+            documents={documents}
           />
         ) : (
           <KnowledgeBaseView
