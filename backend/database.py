@@ -59,6 +59,63 @@ def init_db() -> None:
     db.request("GET", "documents", params={"select": "id", "limit": "1"})
 
 
+def run_schema_migration() -> None:
+    """Executes supabase_schema.sql using DATABASE_URL if the tables do not exist."""
+    import os
+    import psycopg2
+    db_url = settings.DATABASE_URL
+    if not db_url:
+        print("DATABASE_URL not set, skipping schema migration.")
+        return
+        
+    # Correct unencoded '@' sign if database password contains it
+    if db_url.count("@") > 1:
+        parts = db_url.split("@")
+        db_url = "@".join(parts[:-1]).replace("@", "%40") + "@" + parts[-1]
+        
+    try:
+        conn = psycopg2.connect(db_url)
+        with conn.cursor() as cursor:
+            # Check if tables exist
+            cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'documents');")
+            exists = cursor.fetchone()[0]
+            if not exists:
+                print("Tables not found. Running schema migration...")
+                schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supabase_schema.sql")
+                if os.path.exists(schema_path):
+                    with open(schema_path, "r", encoding="utf-8") as f:
+                        sql = f.read()
+                    # Execute SQL schema
+                    cursor.execute(sql)
+                    conn.commit()
+                    print("Schema migration completed successfully!")
+                else:
+                    print(f"Schema file not found at {schema_path}")
+            else:
+                print("Database tables already exist. Skipping migration.")
+        conn.close()
+    except Exception as e:
+        print(f"Error during schema migration: {e}")
+        raise RuntimeError(f"Database schema migration failed: {e}") from e
+
+
+def init_storage() -> None:
+    """Ensure that the Supabase Storage bucket exists."""
+    try:
+        from supabase import create_client
+        supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SECRET_KEY)
+        buckets = supabase_client.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]
+        if "policies" not in bucket_names:
+            print("Creating Supabase Storage bucket 'policies'...")
+            supabase_client.storage.create_bucket("policies", options={"public": True})
+            print("Storage bucket 'policies' created.")
+        else:
+            print("Supabase Storage bucket 'policies' already exists.")
+    except Exception as e:
+        print(f"Error initializing storage bucket: {e}")
+
+
 def add_document(filename: str, storage_size: str, status: str = "Processing", company: str | None = None,
                  tag: str | None = None, description: str | None = None, stored_filename: str | None = None) -> int:
     rows = db.request(

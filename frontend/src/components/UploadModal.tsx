@@ -48,12 +48,12 @@ export default function UploadModal({ isOpen, onClose, onUpload }: UploadModalPr
   const validateAndSetFiles = (selectedFiles: File[]) => {
     const invalidFile = selectedFiles.find((file) => {
       const ext = file.name.split('.').pop()?.toLowerCase();
-      return ext !== 'pdf' && ext !== 'txt' && ext !== 'md';
+      return ext !== 'pdf' && ext !== 'txt' && ext !== 'md' && ext !== 'png' && ext !== 'jpg' && ext !== 'jpeg';
     });
 
     if (invalidFile) {
       setStatus('error');
-      setMessage('Invalid file type. Only PDF, TXT, and MD files are supported.');
+      setMessage('Invalid file type. Only PDF, TXT, MD, PNG, JPG, and JPEG files are supported.');
       setFiles([]);
       return;
     }
@@ -152,7 +152,7 @@ export default function UploadModal({ isOpen, onClose, onUpload }: UploadModalPr
                 ref={inputRef}
                 type="file"
                 className="hidden"
-                accept=".pdf,.txt,.md"
+                accept=".pdf,.txt,.md,.png,.jpg,.jpeg"
                 multiple
                 onChange={handleChange}
                 disabled={uploading}
@@ -170,6 +170,7 @@ export default function UploadModal({ isOpen, onClose, onUpload }: UploadModalPr
                 <span className="px-2 py-0.5 bg-slate-200/70 text-slate-700 text-[10px] font-bold rounded">PDF</span>
                 <span className="px-2 py-0.5 bg-slate-200/70 text-slate-700 text-[10px] font-bold rounded">TXT</span>
                 <span className="px-2 py-0.5 bg-slate-200/70 text-slate-700 text-[10px] font-bold rounded">MD</span>
+                <span className="px-2 py-0.5 bg-slate-200/70 text-slate-700 text-[10px] font-bold rounded">IMG</span>
                 <span className="text-xs text-slate-400 ml-1">• Up to 100 MB</span>
               </div>
             </div>

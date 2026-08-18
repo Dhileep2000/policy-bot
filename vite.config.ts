@@ -4,11 +4,11 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '../backend', '')
-  const apiBaseUrl = env.VITE_API_BASE_URL || '/api'
+  const env = loadEnv(mode, './backend', '')
+  const apiBaseUrl = env.VITE_API_BASE_URL || process.env.VITE_API_BASE_URL || '/api'
 
   return {
-    envDir: '../backend',
+    envDir: './backend',
     plugins: [react(), tailwindcss()],
     server: {
       port: 3000,
@@ -22,8 +22,8 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __API_BASE_URL__: JSON.stringify(apiBaseUrl),
-      __APP_TITLE__: JSON.stringify(env.VITE_APP_TITLE || 'Lexis AI Policy Intelligence'),
-      __DEBUG_MODE__: env.VITE_DEBUG_MODE === 'true',
+      __APP_TITLE__: JSON.stringify(env.VITE_APP_TITLE || process.env.VITE_APP_TITLE || 'Lexis AI Policy Intelligence'),
+      __DEBUG_MODE__: env.VITE_DEBUG_MODE === 'true' || process.env.VITE_DEBUG_MODE === 'true',
     }
   }
 })

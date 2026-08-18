@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://policy-bot-op78.onrender.com/api/:path*"
+    }
+  ]
+}

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     SUPABASE_SECRET_KEY: str = ""
     SUPABASE_PUBLISHABLE_KEY: str = ""
     SUPABASE_JWKS_URL: str = ""
+    DATABASE_URL: str = ""
 
     # ==================== Local document processing ====================
     DOCUMENTS_DIR: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "documents")
@@ -25,8 +26,8 @@ class Settings(BaseSettings):
     RELEVANCE_THRESHOLD: float = 0.28
 
     # ==================== Server Configuration ====================
-    SERVER_HOST: str = "127.0.0.1"
-    SERVER_PORT: int = 8000
+    SERVER_HOST: str = os.environ.get("SERVER_HOST", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+    SERVER_PORT: int = int(os.environ.get("PORT", os.environ.get("SERVER_PORT", 8000)))
     ENVIRONMENT: str = "development"  # development, staging, production
 
     # ==================== CORS & Security Configuration ====================

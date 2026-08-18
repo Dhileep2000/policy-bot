@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { type Document } from '../hooks/useDocuments';
+import api from '../api/axios';
 
 interface KnowledgeBaseViewProps {
   documents: Document[];
@@ -207,20 +208,26 @@ export default function KnowledgeBaseView({
             >
               {/* Card Top Row */}
               <div className="flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
-                    doc.status === 'Processing' 
-                      ? 'bg-amber-50 text-amber-600 border-amber-200' 
-                      : 'bg-slate-900 text-white border-slate-900'
-                  }`}>
-                    <span className={`material-symbols-outlined text-[22px] ${doc.status === 'Processing' ? 'animate-spin' : ''}`}>
-                      {doc.status === 'Processing'
-                        ? 'sync'
-                        : doc.filename.toLowerCase().includes('privacy') || doc.filename.toLowerCase().includes('security')
-                          ? 'shield'
-                          : 'description'}
-                    </span>
-                  </div>
+                  {(() => {
+                    const isImg = doc.filename.toLowerCase().match(/\.(png|jpg|jpeg|gif)$/);
+                    return (
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
+                        doc.status === 'Processing' 
+                          ? 'bg-amber-50 text-amber-600 border-amber-200' 
+                          : 'bg-slate-900 text-white border-slate-900'
+                      }`}>
+                        <span className={`material-symbols-outlined text-[22px] ${doc.status === 'Processing' ? 'animate-spin' : ''}`}>
+                          {doc.status === 'Processing'
+                            ? 'sync'
+                            : isImg
+                              ? 'image'
+                              : doc.filename.toLowerCase().includes('privacy') || doc.filename.toLowerCase().includes('security')
+                                ? 'shield'
+                                : 'description'}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div>
                     {doc.status === 'Indexed' ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-bold tracking-wide uppercase border border-emerald-200">
@@ -268,20 +275,37 @@ export default function KnowledgeBaseView({
                   {doc.filename.split('.')[0]}
                 </h3>
                 
-                {doc.status === 'Processing' ? (
-                  <div className="mt-2">
-                    <p className="text-xs text-slate-500 leading-relaxed">
-                      Generating Gemini vector embeddings...
-                    </p>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2.5 overflow-hidden">
-                      <div className="bg-amber-500 h-full rounded-full w-[65%] animate-pulse"></div>
+                {(() => {
+                  const isImg = doc.filename.toLowerCase().match(/\.(png|jpg|jpeg|gif)$/);
+                  return doc.status === 'Processing' ? (
+                    <div className="mt-2">
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Generating Gemini vector embeddings...
+                      </p>
+                      <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2.5 overflow-hidden">
+                        <div className="bg-amber-500 h-full rounded-full w-[65%] animate-pulse"></div>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-600 leading-relaxed line-clamp-2" title={doc.description || ''}>
-                    {doc.description || 'Policy document indexed into Lexis AI.'}
-                  </p>
-                )}
+                  ) : (
+                    <div className="flex flex-col gap-2.5 mt-1">
+                      {isImg && doc.stored_filename && (
+                        <div className="w-full h-24 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
+                          <img
+                            src={`${api.defaults.baseURL || '/api'}/documents/file/${doc.stored_filename}`}
+                            alt={doc.filename}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      )}
+                      <p className="text-xs text-slate-600 leading-relaxed line-clamp-2" title={doc.description || ''}>
+                        {doc.description || 'Policy document indexed into Lexis AI.'}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Card Footer Row */}

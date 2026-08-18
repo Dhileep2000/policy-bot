@@ -1,5 +1,10 @@
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+# Add backend directory to sys.path to support execution from repository root
+sys.path.append(str(Path(__file__).resolve().parent))
 
 import database
 

@@ -1,4 +1,10 @@
 import os
+import sys
+from pathlib import Path
+
+# Add backend directory to sys.path to support execution from repository root
+sys.path.append(str(Path(__file__).resolve().parent))
+
 import shutil
 import uuid
 import logging
@@ -15,7 +21,9 @@ from database import (
     get_document_by_id,
     add_document,
     update_document_status,
-    delete_document
+    delete_document,
+    run_schema_migration,
+    init_storage
 )
 from vector_store import vector_store
 from rag import rag_pipeline
@@ -24,6 +32,8 @@ from rag import rag_pipeline
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage
+from fastapi import Response
 
 app = FastAPI(title="Lexis AI Policy Intelligence API")
 logger = logging.getLogger(__name__)
@@ -68,11 +78,16 @@ def ensure_chat_services_ready() -> None:
 @app.on_event("startup")
 async def verify_database_connection() -> None:
     try:
+        # 1. Run database schema migrations if tables do not exist
+        run_schema_migration()
+        # 2. Ensure storage bucket is created
+        init_storage()
+        # 3. Verify API connection
         init_db()
         app.state.supabase_error = None
-    except DatabaseError as exc:
+    except Exception as exc:
         app.state.supabase_error = str(exc)
-        logger.warning("Supabase is not ready. Run supabase_schema.sql before using document or chat endpoints.")
+        logger.warning(f"Database or storage startup degraded: {exc}")
 
 
 @app.get("/health")
@@ -175,25 +190,63 @@ def generate_doc_summary_and_tag(filename: str, sample_text: str) -> tuple[str, 
         
     return summary, tag
 
-def process_and_index_document(doc_id: int, file_path: str, filename: str):
+def process_and_index_document(doc_id: int, stored_filename: str, filename: str):
     """
-    Background task to parse documents, chunk them, embed, and store in Supabase.
+    Background task to parse documents from Supabase Storage, chunk them, embed, and store in Supabase.
     """
     try:
+        # Download file bytes from Supabase Storage
+        from supabase import create_client
+        supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SECRET_KEY)
+        file_bytes = supabase_client.storage.from_("policies").download(stored_filename)
+
         text_content = ""
         pages_metadata = []
+        lower_filename = filename.lower()
         
         # 1. Extract text from file
-        if filename.lower().endswith(".pdf"):
-            reader = PdfReader(file_path)
+        if lower_filename.endswith(".pdf"):
+            import io
+            reader = PdfReader(io.BytesIO(file_bytes))
             for idx, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
                 text_content += page_text + "\n"
                 pages_metadata.append((page_text, idx + 1))
+        elif lower_filename.endswith((".png", ".jpg", ".jpeg")):
+            # Perform Gemini Multimodal OCR on the image
+            import base64
+            image_b64 = base64.b64encode(file_bytes).decode("utf-8")
+            ext = os.path.splitext(lower_filename)[1].lower()
+            mime_type = f"image/{ext[1:] if ext != '.jpg' else 'jpeg'}"
+            
+            message = HumanMessage(
+                content=[
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are a policy assistant. Analyze this corporate policy document image. "
+                            "Transcribe all visible text, tables, numbers, compliance guidelines, and policies exactly. "
+                            "Output a clean, detailed text layout suitable for vector chunking. Do not include introductory notes or markdown metadata headers, just output the transcribed content."
+                        )
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}
+                    }
+                ]
+            )
+            
+            llm = ChatGoogleGenerativeAI(
+                model=settings.LLM_MODEL,
+                google_api_key=settings.GEMINI_API_KEY,
+                temperature=0.0
+            )
+            response = llm.invoke([message])
+            text_content = response.content
+            pages_metadata.append((text_content, 1))
         else:
             # Plain text/markdown
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                text_content = f.read()
+            text_content = file_bytes.decode("utf-8", errors="ignore")
             pages_metadata.append((text_content, 1))
             
         if not text_content.strip():
@@ -212,7 +265,7 @@ def process_and_index_document(doc_id: int, file_path: str, filename: str):
         chunks = []
         metadatas = []
         
-        if filename.lower().endswith(".pdf"):
+        if lower_filename.endswith(".pdf"):
             for page_text, page_num in pages_metadata:
                 if not page_text.strip():
                     continue
@@ -279,34 +332,42 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="No file was provided.")
 
     uploaded_docs = []
-    os.makedirs(settings.DOCUMENTS_DIR, exist_ok=True)
 
     for upload_file in selected_files:
-        allowed_exts = [".pdf", ".txt", ".md"]
+        allowed_exts = [".pdf", ".txt", ".md", ".png", ".jpg", ".jpeg"]
         _, ext = os.path.splitext(upload_file.filename or "")
         if ext.lower() not in allowed_exts:
-            raise HTTPException(status_code=400, detail=f"Only PDF, TXT, and MD files are supported. Invalid file: {upload_file.filename}")
+            raise HTTPException(status_code=400, detail=f"Only PDF, TXT, MD, PNG, JPG, and JPEG files are supported. Invalid file: {upload_file.filename}")
 
         original_name = os.path.basename(upload_file.filename or "")
         safe_name = f"{uuid.uuid4().hex}_{original_name}"
-        file_path = os.path.join(settings.DOCUMENTS_DIR, safe_name)
 
         try:
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(upload_file.file, buffer)
+            file_bytes = await upload_file.read()
+            size_bytes = len(file_bytes)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save file {upload_file.filename}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to read file {upload_file.filename}: {str(e)}")
 
-        size_bytes = os.path.getsize(file_path)
         if size_bytes > settings.UPLOAD_MAX_SIZE_MB * 1024 * 1024:
-            os.remove(file_path)
             raise HTTPException(status_code=413, detail=f"{original_name} exceeds the {settings.UPLOAD_MAX_SIZE_MB} MB upload limit.")
+            
         if size_bytes < 1024:
             size_str = f"{size_bytes} B"
         elif size_bytes < 1024 * 1024:
             size_str = f"{size_bytes / 1024:.1f} KB"
         else:
             size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+        try:
+            from supabase import create_client
+            supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SECRET_KEY)
+            supabase_client.storage.from_("policies").upload(
+                path=safe_name,
+                file=file_bytes,
+                file_options={"content-type": upload_file.content_type or "application/octet-stream"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to upload {upload_file.filename} to Supabase Storage: {str(e)}")
 
         try:
             doc_id = add_document(
@@ -317,14 +378,16 @@ async def upload_document(
                 stored_filename=safe_name,
             )
         except Exception as e:
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            try:
+                supabase_client.storage.from_("policies").remove([safe_name])
+            except:
+                pass
             raise HTTPException(status_code=500, detail=f"Database error for {upload_file.filename}: {str(e)}")
 
         background_tasks.add_task(
             process_and_index_document,
             doc_id,
-            file_path,
+            safe_name,
             original_name,
         )
 
@@ -346,24 +409,53 @@ async def upload_document(
         "documents": uploaded_docs,
     }
 
+@app.get("/api/documents/file/{stored_filename}")
+async def get_document_file(stored_filename: str):
+    """
+    Streams the uploaded document or image file directly from Supabase Storage.
+    """
+    try:
+        from supabase import create_client
+        supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SECRET_KEY)
+        file_bytes = supabase_client.storage.from_("policies").download(stored_filename)
+        
+        # Determine content type dynamically
+        ext = os.path.splitext(stored_filename)[1].lower()
+        mime_types = {
+            ".pdf": "application/pdf",
+            ".txt": "text/plain",
+            ".md": "text/markdown",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif"
+        }
+        mime_type = mime_types.get(ext, "application/octet-stream")
+        
+        return Response(content=file_bytes, media_type=mime_type)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"File not found: {str(e)}")
+
 @app.delete("/api/documents/{id}")
 async def delete_document_endpoint(id: int):
     ensure_database_ready()
-    # Fetch file details to remove from disk
     doc = get_document_by_id(id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     stored_filename = doc.get("stored_filename") or doc.get("filename")
-    file_path = os.path.join(settings.DOCUMENTS_DIR, stored_filename)
 
     try:
         # Delete from DB (metadata and embeddings)
         delete_document(id)
 
-        # Delete from disk
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        # Delete from Supabase Storage
+        from supabase import create_client
+        supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SECRET_KEY)
+        try:
+            supabase_client.storage.from_("policies").remove([stored_filename])
+        except Exception as storage_err:
+            logger.warning(f"Could not remove {stored_filename} from storage: {storage_err}")
 
         return {"message": "Document successfully deleted."}
     except Exception as e:

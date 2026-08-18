@@ -4,10 +4,14 @@ External Supabase and Gemini calls are replaced so the complete HTTP contract ca
 be verified safely in any development environment.
 """
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+# Add backend directory to sys.path to support execution from repository root
+sys.path.append(str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +26,7 @@ class ApiIntegrationTests(unittest.TestCase):
             patch.object(main, "init_db"),
             patch.object(main, "gemini_is_configured", return_value=True),
             patch.object(settings, "DOCUMENTS_DIR", self.temp_dir.name),
+            patch("supabase.create_client"),
         ]
         for patcher in self.patches:
             patcher.start()
@@ -70,11 +75,13 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertTrue(add_document.called)
             self.assertTrue(process_document.called)
 
-            stored_file = Path(settings.DOCUMENTS_DIR, document["stored_filename"])
-            stored_file.write_text("test document", encoding="utf-8")
+            import supabase
+            mock_client = supabase.create_client.return_value
+
             delete_response = self.client.delete("/api/documents/7")
             self.assertEqual(delete_response.status_code, 200)
-            self.assertFalse(stored_file.exists())
+            mock_client.storage.from_.assert_called_with("policies")
+            mock_client.storage.from_().remove.assert_called_once_with(["stored-remote-work.txt"])
             delete_document.assert_called_once_with(7)
 
     def test_database_outage_is_reported_as_service_unavailable(self) -> None:
