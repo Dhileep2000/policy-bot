@@ -135,7 +135,7 @@ export default function ChatView({
           <div className="flex justify-center my-2">
             <span className="px-4 py-1.5 rounded-full bg-white border border-slate-200 text-slate-600 text-xs font-semibold flex items-center gap-2 shadow-sm">
               <span className="material-symbols-outlined text-[16px] text-emerald-600">verified_user</span>
-              Secure Policy Assistant • Gemini RAG Pipeline
+              Secure Document Intelligence • Gemini RAG Pipeline
             </span>
           </div>
 
@@ -145,9 +145,9 @@ export default function ChatView({
                 <span className="material-symbols-outlined text-[36px]">policy</span>
               </div>
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Welcome to Lexis AI Policy Assistant</h2>
+                <h2 className="text-xl font-bold text-slate-900">Welcome to Lexis AI Document Assistant</h2>
                 <p className="text-xs text-slate-500 mt-1 max-w-md leading-relaxed">
-                  Ask questions regarding international remote work, travel expenses, data security, compliance directives, and corporate handbooks.
+                  Ask questions regarding your uploaded price lists, guidelines, service details, offers, business information, and policies.
                 </p>
               </div>
             </div>
@@ -281,7 +281,7 @@ export default function ChatView({
           
           <div className="text-center mt-1.5">
             <span className="text-[11px] text-slate-400 font-medium">
-              Lexis AI generates answers grounded strictly in internal policy documents.
+              Lexis AI generates answers grounded strictly in your uploaded knowledge base documents.
             </span>
           </div>
 

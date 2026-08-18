@@ -23,41 +23,13 @@ export interface Message {
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: 'default-user',
-      role: 'user',
-      content: 'What is our corporate remote work policy for international employees? Specifically regarding tax implications and duration limits.',
-    },
-    {
-      id: 'default-assistant',
+      id: 'welcome-message',
       role: 'assistant',
       isRetrieving: false,
-      scanningText: 'Retrieving from Policy Index (HR-Global, Tax-Compliance)',
-      content: 'Based on the current **Global Mobility Policy (v2.4)**, here is the corporate stance on international remote work:\n\n' +
-        '#### Duration Limits\n' +
-        'Employees are permitted to work remotely from an international location for a maximum of **90 days within a rolling 12-month period** [1]. This limit is strictly enforced to prevent triggering permanent establishment risks for the company.\n\n' +
-        '#### Tax & Compliance Implications\n' +
-        '- **Personal Income Tax:** The employee is solely responsible for determining and fulfilling any personal income tax obligations in the host country [2].\n' +
-        '- **Corporate Tax:** Working beyond the 90-day threshold requires executive VP approval and a formal review by the Global Tax Office to assess corporate tax liabilities [3].\n\n' +
-        '*Please consult with your HR Business Partner before finalizing any travel arrangements.*',
-      sources: [
-        {
-          id: 1,
-          filename: 'Global Mobility Policy v2.4',
-          tag: 'HR-POL-01',
-          section: 'Sec 4.1',
-          score: '98%',
-          content: 'Employees are permitted to work remotely from an international location for a maximum of 90 days within a rolling 12-month period...',
-        },
-        {
-          id: 2,
-          filename: 'Cross-Border Tax Guidelines',
-          tag: 'FIN-POL-04',
-          section: 'Appendix B',
-          score: '92%',
-          content: 'The employee is solely responsible for determining and fulfilling any personal income tax obligations in the host country...',
-        },
-      ],
-    },
+      content: 'Hello! I am your Lexis AI Document Intelligence Assistant. ' +
+        'Upload your documents (such as price lists, guides, FAQs, or policies) in the **Knowledge Base** tab, ' +
+        'and I will help you retrieve and analyze information from them. Ask me anything!',
+    }
   ]);
   const [sending, setSending] = useState(false);
   const [indexStatus, setIndexStatus] = useState<'Operational' | 'Searching'>('Operational');

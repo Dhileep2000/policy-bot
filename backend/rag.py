@@ -49,7 +49,7 @@ class PolicyRAGPipeline:
 
     def _answer_from_documents(self, user_query: str, retrieved_chunks: List[Dict]) -> Dict[str, Any]:
         """
-        Generate an answer strictly grounded in retrieved document chunks across multiple organizations.
+        Generate an answer strictly grounded in retrieved document chunks across multiple source files.
         """
         context_blocks = []
         sources_list = []
@@ -59,17 +59,17 @@ class PolicyRAGPipeline:
         for idx, chunk in enumerate(retrieved_chunks):
             citation_num = idx + 1
             filename = chunk["filename"]
-            company = chunk.get("company") or chunk.get("metadata", {}).get("company") or "Corporate Policy"
-            tag = chunk["tag"]
+            company = chunk.get("company") or chunk.get("metadata", {}).get("company") or "Document Library"
+            tag = chunk["tag"] or "DOCUMENT"
             content = chunk["content"]
             score = chunk["score"]
-            meta = chunk["metadata"]
+            meta = chunk["metadata"] or {}
             section = meta.get("section", f"Page {meta.get('page', 1)}")
 
             context_blocks.append(
                 f"Source [{citation_num}]:\n"
-                f"Organization / Company: {company}\n"
-                f"Document Title: {filename} ({tag})\n"
+                f"Document Title: {filename} (Category: {tag})\n"
+                f"Namespace / Category: {company}\n"
                 f"Section: {section}\n"
                 f"Content Snippet: {content}\n"
             )
@@ -90,16 +90,16 @@ class PolicyRAGPipeline:
         context_text = "\n---\n".join(context_blocks)
 
         system_prompt = (
-            "You are a senior corporate policy intelligence assistant for 'Lexis AI', specialized in multi-document RAG analysis.\n"
-            "You are provided with retrieved context from uploaded policy documents spanning one or multiple organizations (e.g., TCS, Cognizant, Infosys, Lexis AI, etc.).\n\n"
+            "You are an advanced document intelligence assistant specialized in multi-document analysis and retrieval-augmented generation (RAG).\n"
+            "You are provided with retrieved context from uploaded files (e.g. price lists, guides, FAQs, policies, manuals, etc.).\n\n"
             "INSTRUCTIONS:\n"
             "1. Answer the query thoroughly, objectively, and accurately using ONLY the provided document context.\n"
-            "2. MULTI-COMPANY ANALYSIS: If the user asks about specific companies or asks to compare policies across organizations:\n"
-            "   - Group your analysis clearly by Company / Organization.\n"
-            "   - Highlight similarities, differences, duration limits, tax responsibilities, allowances, and rules specific to each company.\n"
+            "2. MULTI-DOCUMENT ANALYSIS: If the user query asks to compare, analyze, or synthesize details from different documents or categories:\n"
+            "   - Group your analysis clearly and reference the source files by name.\n"
+            "   - Highlight similarities, differences, pricing details, requirements, or services specific to each document.\n"
             "3. ACCURATE CITATIONS: Cite your sources inline using square brackets matching the source number, e.g., '[1]', '[2]'. If multiple sources support a point, cite them together (e.g. '[1][2]').\n"
             "4. FORMATTING: Use clean markdown headers (#### Header) and bullet points for high legibility.\n"
-            "5. GROUNDING & FIDELITY: Base your response strictly on the retrieved context below. If context for a requested company or topic is missing, state clearly that it is not present in the uploaded policy files.\n\n"
+            "5. GROUNDING & FIDELITY: Base your response strictly on the retrieved context below. If context for the query is missing, state clearly that it is not present in the uploaded files.\n\n"
             "RETRIEVED DOCUMENT CONTEXT:\n"
             "{context}"
         )
@@ -125,34 +125,55 @@ class PolicyRAGPipeline:
 
     def _answer_from_general_knowledge(self, user_query: str, partial_context: str = "") -> Dict[str, Any]:
         """
-        Generate an answer using general knowledge when uploaded policy documents do not contain sufficient context.
+        Generate an answer using general knowledge when uploaded documents do not contain sufficient context.
         """
         if partial_context:
             system_prompt = (
-                "You are a professional corporate policy intelligence assistant for 'Lexis AI'.\n\n"
-                "The employee asked a question. The uploaded policy documents contain partial information "
+                "You are a professional document intelligence assistant.\n\n"
+                "The user asked a question. The uploaded documents contain partial information "
                 "but do not fully answer the query. Below is the partial context found:\n\n"
                 "--- PARTIAL DOCUMENT CONTEXT ---\n"
                 "{context}\n"
                 "--- END PARTIAL CONTEXT ---\n\n"
                 "INSTRUCTIONS:\n"
-                "1. Share relevant findings from the uploaded policy documents first.\n"
-                "2. Supplement with general knowledge regarding corporate policies, HR standards, and legal compliance.\n"
+                "1. Share relevant findings from the uploaded documents first.\n"
+                "2. Supplement with general knowledge to provide a comprehensive answer.\n"
                 "3. Clearly mark the general knowledge section with:\n"
-                "   '> **Note:** The following details are based on general industry standards, not your uploaded policy files.'\n"
-                "4. Use clear headers (#### Header) and bullet points.\n"
+                "   '> **Note:** The following details are based on general knowledge, not your uploaded files.'\n"
+                "4. Use clean headers (#### Header) and bullet points.\n"
             )
         else:
             system_prompt = (
-                "You are a professional corporate policy intelligence assistant for 'Lexis AI'.\n\n"
-                "The employee asked a question, but no relevant policy information was found in the uploaded documents.\n\n"
+                "You are a professional document intelligence assistant.\n\n"
+                "The user asked a question, but no relevant information was found in the uploaded documents.\n\n"
                 "INSTRUCTIONS:\n"
-                "1. Answer using general knowledge about corporate policies, HR best practices, and legal standards.\n"
+                "1. Answer using general knowledge.\n"
                 "2. Begin your response with:\n"
-                "   '> **Note:** This response is generated from general industry knowledge. "
-                "It is not based on your uploaded policy documents. For company-specific guidance, consult your HR team.'\n"
-                "3. Use clear headers (#### Header) and bullet points.\n"
+                "   '> **Note:** This response is generated from general knowledge. "
+                "It is not based on your uploaded documents.'\n"
+                "3. Use clean headers (#### Header) and bullet points.\n"
             )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "{question}")
+        ])
+
+        chain = prompt | self._get_llm() | StrOutputParser()
+
+        inputs = {"question": user_query}
+        if partial_context:
+            inputs["context"] = partial_context
+
+        answer = self._invoke_with_fallback(chain, inputs)
+
+        return {
+            "answer": answer,
+            "sources": [],
+            "index_names": [],
+            "companies": [],
+            "response_type": "general_knowledge"
+        }
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),

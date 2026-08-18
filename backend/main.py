@@ -146,19 +146,11 @@ def detect_company_name(filename: str, sample_text: str) -> str:
 
 def generate_doc_summary_and_tag(filename: str, sample_text: str) -> tuple[str, str]:
     """
-    Uses Gemini to generate a 1-sentence description and a category tag for the document.
+    Uses Gemini to dynamically generate a 1-sentence description and a category tag for the document.
     """
-    tag = "GEN-POL"
-    fname_lower = filename.lower()
+    summary = f"Document outlining details for {filename.split('.')[0]}."
+    tag = "DOCUMENT"
     
-    # Auto-tag based on filename keywords
-    if "employee" in fname_lower or "handbook" in fname_lower or "hr" in fname_lower or "conduct" in fname_lower or "mobility" in fname_lower or "work" in fname_lower or "leave" in fname_lower:
-        tag = "HR-POL-01"
-    elif "privacy" in fname_lower or "data" in fname_lower or "security" in fname_lower or "gdpr" in fname_lower or "cyber" in fname_lower:
-        tag = "SEC-PRO-99"
-    elif "travel" in fname_lower or "expense" in fname_lower or "finance" in fname_lower or "tax" in fname_lower or "corporate" in fname_lower:
-        tag = "FIN-POL-04"
-        
     try:
         llm = ChatGoogleGenerativeAI(
             model=settings.LLM_MODEL,
@@ -166,28 +158,49 @@ def generate_doc_summary_and_tag(filename: str, sample_text: str) -> tuple[str, 
             temperature=0.0
         )
         prompt = (
-            "You are a policy assistant. Read this snippet of a document and write a 1-sentence description "
-            "(maximum 20 words) explaining what this document is. Make it professional.\n\n"
+            "You are a document analyzer. Read this snippet of a document and return two things:\n"
+            "1. A 1-sentence summary description (maximum 25 words) explaining what this document is. Make it professional.\n"
+            "2. A short category tag (3 to 12 characters, alphanumeric, capitalized, e.g., 'PRICE-LIST', 'SERVICES', 'GUIDELINE', 'OFFERS', 'CONTRACT', 'FAQ', 'POLICY').\n\n"
             f"Document Title: {filename}\n"
             f"Snippet: {sample_text[:1500]}\n\n"
-            "Summary:"
+            "Format the output exactly as:\n"
+            "Summary: <your summary>\n"
+            "Tag: <your tag>"
         )
         try:
             response = llm.invoke(prompt)
-            summary = extract_text_content(response.content).strip()
+            output = extract_text_content(response.content).strip()
         except Exception as model_err:
-            print(f"Primary summary LLM failed: {model_err}. Trying fallback gemini-2.5-flash...")
+            print(f"Primary summary/tag LLM failed: {model_err}. Trying fallback gemini-2.5-flash...")
             fallback_llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
                 google_api_key=settings.GEMINI_API_KEY,
                 temperature=0.0
             )
             response = fallback_llm.invoke(prompt)
-            summary = extract_text_content(response.content).strip()
+            output = extract_text_content(response.content).strip()
+            
+        for line in output.split("\n"):
+            if line.strip().startswith("Summary:"):
+                summary = line.replace("Summary:", "").strip()
+            elif line.strip().startswith("Tag:"):
+                tag = line.replace("Tag:", "").strip().upper()
+                
     except Exception as e:
-        print(f"Summary generation error: {e}")
-        summary = f"Policy document outlining guidelines and procedures regarding {filename.split('.')[0]}."
-        
+        print(f"Summary/Tag generation error: {e}")
+        # Default tag detection as a fallback
+        fname_lower = filename.lower()
+        if "price" in fname_lower or "rate" in fname_lower or "cost" in fname_lower:
+            tag = "PRICE-LIST"
+        elif "service" in fname_lower:
+            tag = "SERVICES"
+        elif "offer" in fname_lower or "deal" in fname_lower:
+            tag = "OFFERS"
+        elif "employee" in fname_lower or "hr" in fname_lower or "conduct" in fname_lower:
+            tag = "HR-POL"
+        else:
+            tag = "DOCUMENT"
+            
     return summary, tag
 
 def process_and_index_document(doc_id: int, stored_filename: str, filename: str):
